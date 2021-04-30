@@ -2,7 +2,7 @@
 
 
 ## 需要提供的变量
-K8S_MASTER_IP           k8s master 节点所有的IP地址列表<br/>
+K8S_MASTER_IP       k8s master 节点所有的IP地址列表<br/>
 K8S_WORKER_IP           k8s worker 节点所有的IP地址列表<br/>
 ALLOW_K8S_IP            允许外界访问的 SSH 的IP地址列表<br/>
 ALLLW_K8S_IP            允许管理 K8S 集群的IP地址，一般只写 K8S 管理员的IP地址<br/>
