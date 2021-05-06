@@ -46,7 +46,7 @@ K8S_NODE_OS=""
 INSTALLED_CALICO="1"            # if installed calico, set here
 INSTALLED_FLANNEL=""            # if installed flannel, set here
 INSTALLED_INGRESS="1"           # if installed ingress, set here
-INSTALLED_CEPH="1"
+INSTALLED_CEPHCSI="1"
 
 
 
@@ -233,7 +233,7 @@ function 2_exposed_service_and_port_to_public_network {
 
 
 function 3_exposed_service_and_port_among_k8s_node {
-    MSG1 "3. Setup Firewall for Kubernetes Service"
+    MSG1 "3. Exposed service and port among k8s node"
 
     local CONTROL_PLANE_ENDPOINT_IP=""
     local CONTROL_PLANE_ENDPOINT_PORT=""
@@ -411,6 +411,6 @@ function setup_firewall_for_ceph {
 [ ${INSTALLED_CALICO} ] && setup_firewall_for_calico
 [ ${INSTALLED_FLANNEL} ] && setup_firewall_for_flannel
 [ ${INSTALLED_INGRESS} ] && setup_firewall_for_ingress
-[ ${INSTALLED_CALICO} ] && setup_firewall_for_ceph
+[ ${INSTALLED_CEPHCSI} ] && setup_firewall_for_ceph
 systemctl restart firewalld
 systemctl restart docker
