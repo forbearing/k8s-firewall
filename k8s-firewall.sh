@@ -245,7 +245,7 @@ function 3_exposed_service_and_port_among_k8s_node {
     IFS=${OLD_IFS}
     CONTROL_PLANE_ENDPOINT_IP=${temp_arr[0]}
     CONTROL_PLANE_ENDPOINT_PORT=${temp_arr[1]}
-    my_ipaddress=$(ip addr show dev ${INTERFACE} | grep '\binet' | sed -n '1,1p' |awk '{print $2}' | awk -F'\/' '{print $1}')       # get k8s node ip
+    my_ipaddress=$(ip addr show dev ${INTERFACE} | grep '\binet' | sed -n '1,1p' |awk '{print $2}' | awk -F'/' '{print $1}')       # get k8s node ip
     echo "my ip is ${my_ipaddress}"
 
 
