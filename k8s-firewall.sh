@@ -28,15 +28,15 @@ ALLOW_K8S_IP=(10.230.0.2
                10.230.11.10
               10.230.0.3)
 CONTROL_PLANE_ENDPOINT="10.230.11.10:8443"
+POD_CIDR="192.168.0.0/16"               # k8s pod network cidr
+SERVICE_CIDR="172.18.0.0/16"            # k8s serivce cidr
 
 
-# network cidr
+# network & firewalld
 K8S_ACCEPT_ZONE="k8s-accept"            # k8s-accept zone, allow all package
 K8S_DROP_ZONE="k8s-drop"                # k8s-drop zone, drop all package
 INTERFACE=""                            # k8s node default interface        (NOT SET HERE)
 DOCKER_CIDR=""                          # docker briget network subnet      (NOT SET HERE)
-POD_CIDR="192.168.0.0/16"               # k8s pod network cidr
-SERVICE_CIDR="172.18.0.0/16"            # k8s serivce cidr
 GATEWAY=""                              # k8s node gateway                  (NOT SET HERE)
 DNS=""                                  # k8s node dns, default is gateway
 K8S_NODE_OS=""
@@ -46,6 +46,7 @@ K8S_NODE_OS=""
 INSTALLED_CALICO="1"            # if installed calico, set here
 INSTALLED_FLANNEL=""            # if installed flannel, set here
 INSTALLED_INGRESS="1"           # if installed ingress, set here
+INSTALLED_CEPH="1"
 
 
 
@@ -177,13 +178,13 @@ function 2_exposed_service_and_port_to_public_network {
 
 
     # DHCP requests port: 67/udp Outbound, 68/udp Inbound
-    MSG2 "allow dhcp"
+    MSG2 "Allow dhcp"
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=dhcpv6-client
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=dhcpv6-client --permanent
 
 
     # Only the specificd ip can ping
-    MSG2 "allow icmp"
+    MSG2 "Allow icmp"
     local ALLOW_ICMP_IP=""
     temp_array=(${K8S_IP[@]} ${ALLOW_SSH_IP[@]} ${ALLOW_K8S_IP[@]})
     ALLOW_ICMP_IP=($(tr ' ' '\n' <<< "${temp_array[@]}" | sort -u | tr '\n' ' '))       # shell array deduplicate
@@ -194,13 +195,13 @@ function 2_exposed_service_and_port_to_public_network {
 
 
     # vrrp is a protocol used by keepalived
-    MSG2 "allow vrrp protocol"
+    MSG2 "Allow vrrp protocol"
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-protocol=vrrp
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-protocol=vrrp --permanent
 
 
     # Only the specificd ip can access ssh
-    MSG2 "allow access ssh"
+    MSG2 "Allow ssh login"
     for IP in "${ALLOW_SSH_IP[@]}"; do
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} service name=ssh log prefix='SSH Access' level='notice' accept"
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} service name=ssh log prefix='SSH Access' level='notice' accept" --permanent
@@ -208,7 +209,7 @@ function 2_exposed_service_and_port_to_public_network {
 
 
     # Only the specificd ip can access k8s
-    MSG2 "allow access k8s"
+    MSG2 "Allow manage k8s"
     for IP in "${ALLOW_K8S_IP[@]}"; do
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${CONTROL_PLANE_ENDPOINT_PORT} protocol=tcp accept"
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${CONTROL_PLANE_ENDPOINT_PORT} protocol=tcp accept" --permanent
@@ -216,12 +217,13 @@ function 2_exposed_service_and_port_to_public_network {
 
 
     # Only loadbalancer ip can access k8s NodePort
-    MSG2 "allow access k8s NodePort"
+    MSG2 "Allow access k8s NodePort"
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 port port=30000-32767 protocol=tcp accept"
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 port port=30000-32767 protocol=tcp accept" --permanent
 
 
-    MSG2 "allow access http and https"
+    # Only loadbalancer ip can access k8s NodePort
+    MSG2 "Allow http and https service"
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=http
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=http --permanent
     firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=https
@@ -243,10 +245,11 @@ function 3_exposed_service_and_port_among_k8s_node {
     IFS=${OLD_IFS}
     CONTROL_PLANE_ENDPOINT_IP=${temp_arr[0]}
     CONTROL_PLANE_ENDPOINT_PORT=${temp_arr[1]}
-    my_ipaddress=$(ip addr show dev ${INTERFACE} | grep '\binet' | awk '{print $2}' | awk -F'\/' '{print $1}')       # get k8s node ip
+    my_ipaddress=$(ip addr show dev ${INTERFACE} | grep '\binet' | sed -n '1,1p' |awk '{print $2}' | awk -F'\/' '{print $1}')       # get k8s node ip
+    echo "my ip is ${my_ipaddress}"
 
 
-    MSG2 "Enabled masquerade for K8S"
+    MSG2 "Enabled masquerade for k8s"
     firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-masquerade
     firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-masquerade --permanent
 
@@ -254,13 +257,13 @@ function 3_exposed_service_and_port_among_k8s_node {
     # allow docker briget network
     # allow pod network cidr
     # allow service cidr
-    MSG2 "Enabled docker cidr, pod netwok cidr, service cidr firewall"
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${DOCKER_CIDR}
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${POD_CIDR}
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${SERVICE_CIDR}
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${DOCKER_CIDR} --permanent 
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${POD_CIDR} --permanent
-    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --zone=trusted --add-source=${SERVICE_CIDR} --permanent
+    MSG2 "Enabled docker cidr, pod netwok cidr, service cidr Firewall"
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${DOCKER_CIDR}
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${POD_CIDR}
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${SERVICE_CIDR}
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${DOCKER_CIDR} --permanent 
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${POD_CIDR} --permanent
+    firewall-cmd --zone="${K8S_ACCEPT_ZONE}" --add-source=${SERVICE_CIDR} --permanent
 
 
     # allow k8s all node access kube-apiserver
@@ -288,7 +291,7 @@ function 3_exposed_service_and_port_among_k8s_node {
     fi
 
 
-    # allow k8s all node access kube-scheduler-manager
+    # allow k8s all node access kube-scheduler
     if [[ "${K8S_MASTER_IP[*]}" =~ ${my_ipaddress} ]]; then
     MSG2 "Enable kube-scheduler Firewall"
     for IP in "${K8S_IP[@]}"; do
@@ -344,9 +347,9 @@ function 3_exposed_service_and_port_among_k8s_node {
 
 
 
-function setup_firewalld_for_calico {
+function setup_firewall_for_calico {
     # allow k8s all node access calico network
-    MSG2 "Setup Firewalld for Calico"
+    MSG2 "Enabled Calico Firewall"
     for IP in "${K8S_IP[@]}"; do
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=179 protocol=tcp accept"
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=179 protocol=tcp accept" --permanent
@@ -369,9 +372,9 @@ function setup_firewalld_for_calico {
 
 
 
-function setup_firewalld_for_flannel {
+function setup_firewall_for_flannel {
     # allow k8s all node access Flannel network
-    MSG2 "Setup Firewalld for Flannel"
+    MSG2 "Enabled Flannel Firewall"
     for IP in "${K8S_IP[@]}"; do
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8285 protocol=udp accept"
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8472 protocol=udp accept"
@@ -382,12 +385,20 @@ function setup_firewalld_for_flannel {
 
 
 
-function setup_firewalld_for_ingress {
+function setup_firewall_for_ingress {
     # allow k8s all node accessk kubernetes/ingress-nginx
-    MSG2 " Setup Firewall for ingress"
+    MSG2 "Enabled Ingress Firewall"
     for IP in "${K8S_IP[@]}"; do
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8443 protocol=tcp accept"
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8443 protocol=tcp accept" --permanent
+    done
+}
+
+function setup_firewall_for_ceph {
+    MSG2 "Enabled Ceph Firewall"
+    for IP in "${K8S_IP[@]}"; do
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8680 protocol=tcp accept"
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8680 protocol=tcp accept" --permanent
     done
 }
 
@@ -397,8 +408,9 @@ function setup_firewalld_for_ingress {
 1_create_firewalld_zone_for_k8s
 2_exposed_service_and_port_to_public_network
 3_exposed_service_and_port_among_k8s_node
-[ ${INSTALLED_CALICO} ] && setup_firewalld_for_calico
-[ ${INSTALLED_FLANNEL} ] && setup_firewalld_for_flannel
-[ ${INSTALLED_INGRESS} ] && setup_firewalld_for_ingress
+[ ${INSTALLED_CALICO} ] && setup_firewall_for_calico
+[ ${INSTALLED_FLANNEL} ] && setup_firewall_for_flannel
+[ ${INSTALLED_INGRESS} ] && setup_firewall_for_ingress
+[ ${INSTALLED_CALICO} ] && setup_firewall_for_ceph
 systemctl restart firewalld
 systemctl restart docker
