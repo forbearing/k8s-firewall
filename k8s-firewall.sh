@@ -12,40 +12,53 @@ MSG2(){ echo -e "\n\033[33m\033[01m$1\033[0m"; }
 
 
 # k8s ip
-K8S_MASTER_IP=(10.230.11.11
-               10.230.11.12
-               10.230.11.13)
-K8S_WORKER_IP=(10.230.11.21
-               10.230.11.22
-               10.230.11.23)
+K8S_MASTER_IP=(10.250.12.11
+               10.250.12.12
+               10.250.12.13)
+K8S_WORKER_IP=(10.250.12.21
+               10.250.12.22
+               10.250.12.23)
 K8S_IP=(${K8S_MASTER_IP[@]} ${K8S_WORKER_IP[@]})
-ALLOW_SSH_IP=(10.230.0.2
-               10.230.0.1
-               10.230.11.10
-               10.230.0.3)
-ALLOW_K8S_IP=(10.230.0.2
-               10.230.0.1
-               10.230.11.10
-              10.230.0.3)
-CONTROL_PLANE_ENDPOINT="10.230.11.10:8443"
+CONTROL_PLANE_ENDPOINT="10.250.12.10:8443"
 POD_CIDR="192.168.0.0/16"               # k8s pod network cidr
 SERVICE_CIDR="172.18.0.0/16"            # k8s serivce cidr
+DOCKER_CIDR=""                          # docker briget network subnet      (NOT SET HERE)
+
+# Allow access ssh service ip
+ALLOW_SSH_IP=(10.250.0.2
+               10.250.0.1
+               10.250.12.1
+               10.250.0.3)
+
+# Allow manager k8s ip
+ALLOW_K8S_IP=(10.250.0.2
+               10.250.0.1
+               10.250.12.1
+              10.250.0.3)
+
+
+ALLOW_ICMP_IP=""                        # allow ping k8s ip
+ALLOW_NODEPORT_IP=""                    # allow access k8s NodePort ip
+ALLOW_HTTPS_IP=""                       # allow access k8s http/https service ip
+temp_array=(${K8S_IP[@]} ${ALLOW_SSH_IP[@]} ${ALLOW_K8S_IP[@]})
+ALLOW_ICMP_IP=($(tr ' ' '\n' <<< "${temp_array[@]}" | sort -u | tr '\n' ' '))       # shell array deduplicate
+ALLOW_NODEPORT_IP=(${ALLOW_ICMP_IP[@]})
+ALLOW_HTTPS_IP=(${ALLOW_ICMP_IP[@]})
 
 
 # network & firewalld
-K8S_ACCEPT_ZONE="k8s-accept"            # k8s-accept zone, allow all package
+K8S_ACCEPT_ZONE="k8s-accept"            # k8s-accept zone, allow all package, (whitelist)
 K8S_DROP_ZONE="k8s-drop"                # k8s-drop zone, drop all package
 INTERFACE=""                            # k8s node default interface        (NOT SET HERE)
-DOCKER_CIDR=""                          # docker briget network subnet      (NOT SET HERE)
 GATEWAY=""                              # k8s node gateway                  (NOT SET HERE)
 DNS=""                                  # k8s node dns, default is gateway
 K8S_NODE_OS=""
 
 
-
-INSTALLED_CALICO="1"            # if installed calico, set here
-INSTALLED_FLANNEL=""            # if installed flannel, set here
-INSTALLED_INGRESS="1"           # if installed ingress, set here
+# kubernetes addon
+INSTALLED_CALICO="1"                    # if installed calico, set here
+INSTALLED_FLANNEL=""                    # if installed flannel, set here
+INSTALLED_INGRESS="1"                   # if installed ingress, set here
 INSTALLED_CEPHCSI="1"
 
 
@@ -63,43 +76,36 @@ function 0_prepare {
 
 
     # 3. install firewalld & iproute
-    command -v firewalld &> /dev/null
-    if [[ $? != 0 ]]; then
+    if ! command -v firewalld &> /dev/null; then
         case ${K8S_NODE_OS} in
             "centos" | "rhel" )
                 MSG2 "installing firewalld"
                 yum install -y firewalld
                 systemctl disable --now iptables
-                systemctl mask iptable
-                systemctl enable --now firewalld
-                ;;
+                systemctl mask iptables
+                systemctl enable --now firewalld ;;
             "ubuntu")
                 MSG2 "installing firewalld"
                 apt-get update
-                apt-get install firewalld
+                apt-get install -y firewalld
                 systemctl enable --now firewalld
-                ufw disable
-                ;;
+                ufw disable ;;
             "debian")
                 MSG2 "installing firewalld"
                 apt-get update
-                apt-get install firewalld
-                systemctl enable --now firewalld
-                ;;
+                apt-get install -y firewalld
+                systemctl enable --now firewalld ;;
         esac
     fi
-    command -v ip &> /dev/null
-    if [[ $? != 0 ]]; then
+    if ! command -v ip &> /dev/null; then
         case ${K8S_NODE_OS} in
             "centos" | "rhel")
                 MSG2 "installing iproute"
-                yum install -y iproute
-                ;;
+                yum install -y iproute ;;
             "debian" | "ubuntu")
                 MSG2 "installing iproute2"
                 apt-get update
-                apt-get install iproute2
-                ;;
+                apt-get install -y iproute2 ;;
         esac
     fi
 
@@ -111,9 +117,9 @@ function 0_prepare {
             "centos" | "rhel" )
                 rpm -qi docker-ce &> /dev/null ;;
             "debian" | "ubuntu" )
-                dpkg -l docker-ce ;;
+                dpkg -l docker-ce &> /dev/null ;;
         esac
-        if [ $? != 0 ]; then
+        if [ $? -ne 0 ]; then
             DOCKER_CIDR="172.17.0.0/16"             # if not install docker-ce, set the default DOCKER_CIDR value
         else                                        # if install docker-ce, get the DOCKER_CIDR value
             docker_bridge_network_subnet=$(docker network list | grep bridge | awk '{print $1}')
@@ -185,9 +191,6 @@ function 2_exposed_service_and_port_to_public_network {
 
     # Only the specificd ip can ping
     MSG2 "Allow icmp"
-    local ALLOW_ICMP_IP=""
-    temp_array=(${K8S_IP[@]} ${ALLOW_SSH_IP[@]} ${ALLOW_K8S_IP[@]})
-    ALLOW_ICMP_IP=($(tr ' ' '\n' <<< "${temp_array[@]}" | sort -u | tr '\n' ' '))       # shell array deduplicate
     for IP in "${ALLOW_ICMP_IP[@]}"; do
         firewall-cmd --zone="$K8S_DROP_ZONE" --add-rich-rule "rule family=ipv4 source address=${IP} protocol value=icmp accept"
         firewall-cmd --zone="$K8S_DROP_ZONE" --add-rich-rule "rule family=ipv4 source address=${IP} protocol value=icmp accept" --permanent
@@ -216,18 +219,28 @@ function 2_exposed_service_and_port_to_public_network {
     done
 
 
-    # Only loadbalancer ip can access k8s NodePort
+    # Only specified ip can access k8s NodePort
     MSG2 "Allow access k8s NodePort"
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 port port=30000-32767 protocol=tcp accept"
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 port port=30000-32767 protocol=tcp accept" --permanent
+    local NODEPORT_RAGE=""
+    NODEPORT_RAGE="30000-32767"
+    for IP in "${ALLOW_NODEPORT_IP[@]}"; do
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${NODEPORT_RAGE} protocol=tcp accept"
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${NODEPORT_RAGE} protocol=tcp accept" --permanent
+    done
 
 
-    # Only loadbalancer ip can access k8s NodePort
+    # Only specified ip can access http/https service
     MSG2 "Allow http and https service"
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=http
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=http --permanent
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=https
-    firewall-cmd --zone="${K8S_DROP_ZONE}" --add-service=https --permanent
+    local HTTP_PORT=""
+    local HTTPS_PORT=""
+    HTTP_PORT=80
+    HTTPS_PORT=443
+    for IP in "${ALLOW_HTTPS_IP[@]}"; do
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${HTTP_PORT} protocol=tcp accept"
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${HTTP_PORT} protocol=tcp accept" --permanent
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${HTTPS_PORT} protocol=tcp accept"
+        firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=${HTTPS_PORT} protocol=tcp accept" --permanent
+    done
 }
 
 
