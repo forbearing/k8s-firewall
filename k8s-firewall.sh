@@ -12,30 +12,42 @@ MSG2(){ echo -e "\n\033[33m\033[01m$1\033[0m"; }
 
 
 # k8s ip
-K8S_MASTER_IP=(10.250.12.11
-               10.250.12.12
-               10.250.12.13)
-K8S_WORKER_IP=(10.250.12.21
-               10.250.12.22
-               10.250.12.23)
+K8S_MASTER_IP=(
+10.240.3.11
+10.240.3.12
+10.240.3.13)
+K8S_WORKER_IP=(
+10.240.3.21
+10.240.3.22
+10.240.3.23)
 K8S_IP=(${K8S_MASTER_IP[@]} ${K8S_WORKER_IP[@]})
-CONTROL_PLANE_ENDPOINT="10.250.12.10:8443"
-POD_CIDR="192.168.0.0/16"               # k8s pod network cidr
-SERVICE_CIDR="172.18.0.0/16"            # k8s serivce cidr
+CONTROL_PLANE_ENDPOINT="10.240.3.10:6443"
+SERVICE_CIDR="10.250.0.0/16"            # k8s serivce cidr
+POD_CIDR="172.18.0.0/16"                # k8s pod network cidr
 DOCKER_CIDR=""                          # docker briget network subnet      (NOT SET HERE)
 
+# whitelist ip
+WHITELIST_IP=(
+10.240.0.205                            # QA's win10 ip
+10.240.0.206)                           # QA's ubuntu ip
+
 # Allow access ssh service ip
-ALLOW_SSH_IP=(10.250.0.2
-               10.250.0.1
-               10.250.12.1
-               10.250.0.3)
+ALLOW_SSH_IP=(
+10.240.0.10                             # JumpServer's IP
+10.240.0.101                            # Jonas's IP
+10.240.0.110                            # Jefflinux's IP
+10.240.0.205                            # QA's win10 ip
+10.240.0.206                            # QA's ubuntu ip
+10.240.3.1)                             # Loadbalancer's IP
 
 # Allow manager k8s ip
-ALLOW_K8S_IP=(10.250.0.2
-               10.250.0.1
-               10.250.12.1
-              10.250.0.3)
-
+ALLOW_K8S_IP=(
+10.240.0.10                             # JumpServer's IP
+10.240.0.101                            # Jonas's IP
+10.240.0.110                            # Jefflinux's IP
+10.240.0.205                            # QA's win10 ip
+10.240.0.206                            # QA's ubuntu ip
+10.240.3.1)                             # Loadbalancer's IP
 
 ALLOW_ICMP_IP=""                        # allow ping k8s ip
 ALLOW_NODEPORT_IP=""                    # allow access k8s NodePort ip
@@ -58,7 +70,7 @@ K8S_NODE_OS=""
 # kubernetes addon
 INSTALLED_CALICO="1"                    # if installed calico, set here
 INSTALLED_FLANNEL=""                    # if installed flannel, set here
-INSTALLED_INGRESS="1"                   # if installed ingress, set here
+INSTALLED_INGRESS=""                    # if installed ingress, set here
 INSTALLED_CEPHCSI="1"
 
 
@@ -360,6 +372,15 @@ function 3_exposed_service_and_port_among_k8s_node {
 
 
 
+function 4_add_whitelist_ip {
+    for IP in "${WHITELIST_IP}"; do
+        firewall-cmd --zone=${K8S_ACCEPT_ZONE} --add-source ${IP}
+        firewall-cmd --zone=${K8S_ACCEPT_ZONE} --add-source ${IP} --permanent
+    done
+}
+
+
+
 function setup_firewall_for_calico {
     # allow k8s all node access calico network
     MSG2 "Enabled Calico Firewall"
@@ -383,8 +404,6 @@ function setup_firewall_for_calico {
 
 }
 
-
-
 function setup_firewall_for_flannel {
     # allow k8s all node access Flannel network
     MSG2 "Enabled Flannel Firewall"
@@ -395,8 +414,6 @@ function setup_firewall_for_flannel {
         firewall-cmd --zone="${K8S_DROP_ZONE}" --add-rich-rule "rule family=ipv4 source address=${IP} port port=8472 protocol=udp accept" --permanent
     done
 }
-
-
 
 function setup_firewall_for_ingress {
     # allow k8s all node accessk kubernetes/ingress-nginx
@@ -421,6 +438,7 @@ function setup_firewall_for_ceph {
 1_create_firewalld_zone_for_k8s
 2_exposed_service_and_port_to_public_network
 3_exposed_service_and_port_among_k8s_node
+4_add_whitelist_ip
 [ ${INSTALLED_CALICO} ] && setup_firewall_for_calico
 [ ${INSTALLED_FLANNEL} ] && setup_firewall_for_flannel
 [ ${INSTALLED_INGRESS} ] && setup_firewall_for_ingress
