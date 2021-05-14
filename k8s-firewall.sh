@@ -373,7 +373,7 @@ function 3_exposed_service_and_port_among_k8s_node {
 
 
 function 4_add_whitelist_ip {
-    for IP in "${WHITELIST_IP}"; do
+    for IP in "${WHITELIST_IP[@]}"; do
         firewall-cmd --zone=${K8S_ACCEPT_ZONE} --add-source ${IP}
         firewall-cmd --zone=${K8S_ACCEPT_ZONE} --add-source ${IP} --permanent
     done
